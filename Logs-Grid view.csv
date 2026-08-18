@@ -1,0 +1,16 @@
+﻿Id,Type,Stage,LeadEmail,Priority,Category,Details,Timestamp
+4,info,lead_processed,jane@acme.com,high,sales_inquiry,Lead processed. AI fallback used: false,2026-08-18 11:46
+5,error,ai_qualification,random@test.com,,,Groq qualification call failed or returned non-retryable error; rule-based fallback used.,2026-08-18 15:00
+6,error,ai_qualification,random@test.com,,,Groq qualification call failed or returned non-retryable error; rule-based fallback used.,2026-08-18 15:06
+7,error,ai_qualification,bob@example.com,,,Groq qualification call failed or returned non-retryable error; rule-based fallback used.,2026-08-18 15:11
+8,error,ai_qualification,bob@example.com,,,Groq qualification call failed or returned non-retryable error; rule-based fallback used.,2026-08-18 15:14
+9,info,lead_processed,bob@example.com,,,Lead processed. AI fallback used: undefined,2026-08-18 15:14
+10,error,ai_qualification,spam@test.com,,,Groq qualification call failed or returned non-retryable error; rule-based fallback used.,2026-08-18 15:15
+11,info,lead_processed,spam@test.com,,,Lead processed. AI fallback used: undefined,2026-08-18 15:15
+12,error,ai_qualification,error@test.com,,,Groq qualification call failed or returned non-retryable error; rule-based fallback used.,2026-08-18 15:18
+13,info,lead_processed,error@test.com,,,Lead processed. AI fallback used: undefined,2026-08-18 15:18
+14,error,ai_qualification,salmanismail9291@gmail.com,,,Groq qualification call failed or returned non-retryable error; rule-based fallback used.,2026-08-18 15:26
+15,info,lead_processed,salmanismail9291@gmail.com,high,sales_inquiry,Lead processed. AI fallback used: false,2026-08-18 15:27
+16,info,ai_qualification,salmanismail9291@gmail.com,high,sales_inquiry,Lead processed. AI fallback used: false,2026-08-18 15:27
+17,info,lead_processed,i211220b@nu.edu.pk,low,spam,Lead processed. AI fallback used: false,2026-08-18 15:36
+18,info,lead_processed,jane.verify2@acme.com,high,sales_inquiry,Lead processed. AI fallback used: false,2026-08-18 15:37

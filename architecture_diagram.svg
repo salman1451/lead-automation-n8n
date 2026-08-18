@@ -1,0 +1,169 @@
+<svg viewBox="0 0 1300 1900" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#DC2626"/>
+    </marker>
+  </defs>
+
+  <style>
+    .proc { fill:#EAF2FB; stroke:#2563EB; stroke-width:2; }
+    .rule { fill:#FEF9C3; stroke:#CA8A04; stroke-width:2.5; }
+    .ext  { fill:#F3E8FF; stroke:#7C3AED; stroke-width:2; }
+    .term { fill:#DCFCE7; stroke:#16A34A; stroke-width:2; }
+    .err  { fill:#FEE2E2; stroke:#DC2626; stroke-width:2; }
+    .dec  { fill:#FFF7ED; stroke:#EA580C; stroke-width:2; }
+    .lbl  { font-size:14px; fill:#1E293B; text-anchor:middle; }
+    .lbl2 { font-size:11px; fill:#475569; text-anchor:middle; }
+    .edge { stroke:#334155; stroke-width:1.6; fill:none; marker-end:url(#arrow); }
+    .edgeErr { stroke:#DC2626; stroke-width:1.4; fill:none; stroke-dasharray:5,4; marker-end:url(#arrowRed); }
+    .branch { font-size:11px; fill:#64748B; font-style:italic; }
+    .section { font-size:16px; font-weight:600; fill:#0F172A; }
+  </style>
+
+  <!-- Title -->
+  <text x="650" y="30" font-size="22" font-weight="700" fill="#0F172A" text-anchor="middle">Lead Automation — Architecture</text>
+  <text x="650" y="50" font-size="13" fill="#64748B" text-anchor="middle">n8n orchestration · Groq qualification · Airtable CRM · Gmail/Slack notifications</text>
+
+  <!-- Legend -->
+  <g transform="translate(40,70)">
+    <rect x="0" y="0" width="16" height="16" class="proc"/><text x="22" y="13" font-size="12" fill="#334155">Deterministic logic</text>
+    <rect x="180" y="0" width="16" height="16" class="ext"/><text x="202" y="13" font-size="12" fill="#334155">External API / AI call</text>
+    <rect x="380" y="0" width="16" height="16" class="dec"/><text x="402" y="13" font-size="12" fill="#334155">Decision</text>
+    <rect x="500" y="0" width="16" height="16" class="err"/><text x="522" y="13" font-size="12" fill="#334155">Error / log</text>
+    <rect x="630" y="0" width="16" height="16" class="term"/><text x="652" y="13" font-size="12" fill="#334155">Start / response</text>
+    <rect x="800" y="0" width="16" height="16" class="rule"/><text x="822" y="13" font-size="12" fill="#334155">Business rules (non-AI)</text>
+  </g>
+
+  <!-- Start -->
+  <rect x="500" y="100" width="200" height="46" rx="23" class="term"/>
+  <text x="600" y="128" class="lbl">Website Lead Form</text>
+
+  <path class="edge" d="M600,146 L600,176"/>
+  <rect x="480" y="176" width="240" height="50" rx="6" class="proc"/>
+  <text x="600" y="205" class="lbl">Webhook — Lead Intake</text>
+
+  <path class="edge" d="M600,226 L600,256"/>
+  <rect x="470" y="256" width="260" height="50" rx="6" class="proc"/>
+  <text x="600" y="286" class="lbl">Validate &amp; Normalize Lead</text>
+
+  <path class="edge" d="M600,306 L600,336"/>
+  <polygon points="600,336 690,386 600,436 510,386" class="dec"/>
+  <text x="600" y="391" class="lbl">Valid?</text>
+
+  <!-- Invalid branch -->
+  <path class="edge" d="M690,386 L900,386"/>
+  <text x="790" y="378" class="branch">no</text>
+  <rect x="900" y="361" width="220" height="50" rx="6" class="err"/>
+  <text x="1010" y="391" class="lbl">Log Validation Error</text>
+  <path class="edge" d="M1010,411 L1010,461"/>
+  <rect x="900" y="461" width="220" height="46" rx="23" class="term"/>
+  <text x="1010" y="489" class="lbl">Respond 400</text>
+
+  <!-- Valid branch continues -->
+  <path class="edge" d="M600,436 L600,466"/>
+  <text x="560" y="428" class="branch">yes</text>
+  <rect x="460" y="466" width="280" height="50" rx="6" class="ext"/>
+  <text x="600" y="496" class="lbl">Airtable — Search Existing Lead</text>
+
+  <path class="edge" d="M600,516 L600,546"/>
+  <rect x="450" y="546" width="300" height="50" rx="6" class="proc"/>
+  <text x="600" y="576" class="lbl">Check Duplicate &amp; Rate Limit</text>
+
+  <path class="edge" d="M600,596 L600,626"/>
+  <polygon points="600,626 700,681 600,736 500,681" class="dec"/>
+  <text x="600" y="676" class="lbl">Duplicate /</text>
+  <text x="600" y="692" class="lbl">rate limited?</text>
+
+  <path class="edge" d="M700,681 L900,681"/>
+  <text x="800" y="673" class="branch">yes</text>
+  <rect x="900" y="656" width="240" height="50" rx="23" class="term"/>
+  <text x="1020" y="686" class="lbl">Respond 429 / 200</text>
+
+  <path class="edge" d="M600,736 L600,766"/>
+  <text x="560" y="758" class="branch">no</text>
+  <rect x="440" y="766" width="320" height="50" rx="6" class="ext"/>
+  <text x="600" y="796" class="lbl">Groq — Qualify Lead (JSON mode)</text>
+  <text x="600" y="810" class="lbl2">retryOnFail x3, 2s backoff</text>
+
+  <path class="edge" d="M600,826 L600,856"/>
+  <polygon points="600,856 700,911 600,966 500,911" class="dec"/>
+  <text x="600" y="906" class="lbl">AI call</text>
+  <text x="600" y="922" class="lbl">succeeded?</text>
+
+  <!-- AI fail branch -->
+  <path class="edge" d="M700,911 L920,911"/>
+  <text x="810" y="903" class="branch">no</text>
+  <rect x="920" y="886" width="260" height="50" rx="6" class="proc"/>
+  <text x="1050" y="916" class="lbl">Rule-Based Fallback</text>
+  <path class="edge" d="M1050,936 L1050,966"/>
+  <rect x="920" y="966" width="260" height="46" rx="6" class="err"/>
+  <text x="1050" y="994" class="lbl">Log AI Failure</text>
+
+  <!-- AI success branch -->
+  <path class="edge" d="M500,911 L280,911"/>
+  <text x="390" y="903" class="branch">yes</text>
+  <rect x="150" y="886" width="260" height="50" rx="6" class="proc"/>
+  <text x="280" y="916" class="lbl">Parse AI Qualification</text>
+
+  <!-- merge -->
+  <path class="edge" d="M280,936 L280,1050 L600,1050 L600,1076"/>
+  <path class="edge" d="M1050,1012 L1050,1050 L600,1050"/>
+
+  <rect x="440" y="1076" width="320" height="54" rx="6" class="rule"/>
+  <text x="600" y="1099" class="lbl">Apply Business Rules</text>
+  <text x="600" y="1116" class="lbl2">budget floor · spam override · deterministic, not AI-decided</text>
+
+  <path class="edge" d="M600,1130 L600,1160"/>
+  <rect x="440" y="1160" width="320" height="50" rx="6" class="ext"/>
+  <text x="600" y="1190" class="lbl">Airtable — Upsert Lead (CRM)</text>
+
+  <path class="edge" d="M600,1210 L600,1240"/>
+  <rect x="440" y="1240" width="320" height="50" rx="6" class="ext"/>
+  <text x="600" y="1270" class="lbl">Airtable — Write Log Entry</text>
+
+  <path class="edge" d="M600,1290 L600,1320"/>
+  <polygon points="600,1320 700,1375 600,1430 500,1375" class="dec"/>
+  <text x="600" y="1380" class="lbl">Qualified?</text>
+
+  <!-- qualified branch -->
+  <path class="edge" d="M500,1375 L280,1375"/>
+  <text x="390" y="1367" class="branch">yes</text>
+  <rect x="150" y="1350" width="260" height="50" rx="6" class="ext"/>
+  <text x="280" y="1380" class="lbl">Groq — Generate Email</text>
+  <path class="edge" d="M280,1400 L280,1430"/>
+  <rect x="150" y="1430" width="260" height="50" rx="6" class="ext"/>
+  <text x="280" y="1460" class="lbl">Gmail — Send Personalized Email</text>
+  <path class="edge" d="M280,1480 L280,1530 L600,1530 L600,1556"/>
+
+  <!-- not qualified skip -->
+  <path class="edge" d="M700,1375 L900,1375 L900,1530 L620,1530"/>
+  <text x="800" y="1367" class="branch">no (skip email)</text>
+
+  <path class="edge" d="M600,1500 L600,1556"/>
+  <polygon points="600,1556 700,1611 600,1666 500,1611" class="dec"/>
+  <text x="600" y="1616" class="lbl">High</text>
+  <text x="600" y="1632" class="lbl">priority?</text>
+
+  <path class="edge" d="M700,1611 L920,1611"/>
+  <text x="810" y="1603" class="branch">yes</text>
+  <rect x="920" y="1571" width="260" height="60" rx="6" class="ext"/>
+  <text x="1050" y="1601" class="lbl">Slack — Notify Sales Team</text>
+  <text x="1050" y="1619" class="lbl2">single channel, real-time</text>
+
+  <path class="edge" d="M600,1666 L600,1706"/>
+  <path class="edge" d="M1050,1651 L1050,1706 L620,1706"/>
+  <text x="560" y="1698" class="branch">no</text>
+
+  <rect x="480" y="1706" width="240" height="46" rx="23" class="term"/>
+  <text x="600" y="1734" class="lbl">Respond 200 — Success</text>
+
+  <!-- Error handler side box -->
+  <rect x="20" y="1780" width="1260" height="100" rx="8" fill="#FEF2F2" stroke="#DC2626" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="650" y="1805" font-size="13" font-weight="600" fill="#991B1B" text-anchor="middle">Global Error Handler Workflow (attached at workflow settings level)</text>
+  <text x="650" y="1826" font-size="12" fill="#7F1D1D" text-anchor="middle">Any node failure not explicitly caught above (credential expiry, unexpected exceptions, timeouts) triggers this workflow:</text>
+  <text x="650" y="1846" font-size="12" fill="#7F1D1D" text-anchor="middle">Error Trigger → Extract Error Details → Airtable "Errors" table → Slack alert to #automation-alerts</text>
+  <text x="650" y="1866" font-size="11" fill="#991B1B" text-anchor="middle">(dashed connections indicate this safety net covers every node in the pipeline above, not just one path)</text>
+</svg>

@@ -1,0 +1,11 @@
+﻿Name,Email,Phone,Company,Source,Budget,Timeline,Message,Category,Priority,Score,Summary,Status,IdempotencyKey,SubmittedAt,AIFallbackUsed
+,,,,,,,,sales_inquiry,high,,,qualified,,,checked
+Jane Doe,jane@acme.com,+1-555-0100,Acme Corp,website_form,25000,Q1 2027,We need a demo of your enterprise plan for a 200-person rollout.,sales_inquiry,high,85,"Jane Doe from Acme Corp requests a demo of the enterprise plan for a 200-person rollout, with a $25k budget and Q1 2027 timeline.",qualified,4f1677b2,2026-08-18 11:28,
+salman ismail,sa079545@gmail.com,+1-555-0199,Globex Inc,referral,8000,Q3 2026,"Looking for a smaller pilot rollout for a 20-person team, not urgent.",sales_inquiry,medium,70,"Salman Ismail from Globex Inc seeks a pilot rollout for a 20-person team with an $8,000 budget, targeting Q3 2026.",qualified,1d3f2ece,2026-08-18 12:58,
+Bob Smith,bob@example.com,,,website_form,,,"just browsing, not really interested right now",,,,,not_qualified,6ef7b87e,2026-08-18 15:14,
+Spammer,spam@test.com,,SEO Services LLC,website_form,,,buy crypto now unsubscribe,,,,,not_qualified,ecdae4c2,2026-08-18 15:15,
+Error Test,error@test.com,,,website_form,,,testing error handler trigger,,,,,not_qualified,fb79645b,2026-08-18 15:18,
+Salman Ahmed,salmanismail9291@gmail.com,+1-555-0100,Cplus Soft,website_form,25000,Q1 2027,We need a demo of your enterprise plan for a 200-person rollout.,sales_inquiry,high,85,Salman Ahmed from Cplus Soft requests a demo of the enterprise plan for a 200‑person rollout with a $25k budget targeting Q1 2027.,qualified,209365d2,2026-08-18 15:27,
+salman khan,i211220@nu.edu.pk,+1-555-0001,n/a,website_form,0,n/a,free crypto giveaway click now limited offer,spam,low,5,The message promotes a free crypto giveaway and contains a suspicious link.,not_qualified,4f156179,2026-08-18 15:33,
+salman khan,i211220b@nu.edu.pk,+1-555-0002,n/a,website_form,0,n/a,free crypto giveaway click now limited offer,spam,low,5,The message is a free crypto giveaway spam with a click‑bait offer.,not_qualified,a33ceec5,2026-08-18 15:36,
+Jane Doe,jane.verify2@acme.com,+1-555-0100,Acme Corp,website_form,25000,Q1 2027,We need a demo of your enterprise plan for a 200-person rollout.,sales_inquiry,high,85,"Acme Corp seeks a demo of the enterprise plan for a 200-person rollout, with a $25k budget and Q1 2027 timeline.",qualified,eb673edd,2026-08-18 15:37,

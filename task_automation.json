@@ -1,0 +1,1685 @@
+{
+  "name": "task_automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "aa5f9f02-5481-4599-83b7-9919b4c18274",
+      "name": "Webhook - Lead Intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1500,
+        -120
+      ],
+      "webhookId": "lead-intake-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate & normalize incoming lead payload\nconst body = $input.first().json.body || $input.first().json;\n\nconst errors = [];\nconst name = (body.name || '').toString().trim();\nconst email = (body.email || '').toString().trim().toLowerCase();\nconst message = (body.message || body.notes || '').toString().trim();\nconst phone = (body.phone || '').toString().trim();\nconst company = (body.company || '').toString().trim();\nconst source = (body.source || 'website_form').toString().trim();\nconst budget = body.budget !== undefined ? Number(body.budget) : null;\nconst timeline = (body.timeline || '').toString().trim();\nconst requestId = (body.requestId || '').toString().trim();\n\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\nif (!name) errors.push('name is required');\nif (!email) errors.push('email is required');\nelse if (!emailRegex.test(email)) errors.push('email format is invalid');\nif (!message) errors.push('message is required');\n\n// Idempotency key: prefer client-supplied requestId, else a hash of email+message\n// (no time component, so a retried webhook delivery minutes later still produces\n// the SAME key and gets caught by the duplicate check downstream, instead of\n// silently creating a second lead). Uses a plain JS hash -- no 'crypto' require,\n// so it runs in n8n's sandboxed Code node with no env config needed.\nfunction simpleHash(str) {\n  let hash = 0;\n  for (let i = 0; i < str.length; i++) {\n    hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;\n  }\n  return (hash >>> 0).toString(16);\n}\n\nconst idempotencySeed = requestId || `${email}|${message}`;\nconst idempotencyKey = simpleHash(idempotencySeed);\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors,\n    lead: {\n      name, email, phone, company, source, budget, timeline, message,\n      submittedAt: new Date().toISOString(),\n      idempotencyKey\n    }\n  }\n}];"
+      },
+      "id": "ff3d6008-36bf-4fc3-a4e4-fbec976fb892",
+      "name": "Validate & Normalize Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1220,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e085c671-b5c9-4819-8e1a-bfc488eebe59",
+      "name": "If - Valid Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -920,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "applcbUSfwUOKFYAy",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tbltmazBktvqT6Taf",
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://airtable.com/applcbUSfwUOKFYAy/tbltmazBktvqT6Taf"
+        },
+        "filterByFormula": "={{ \"{Email} = '\" + $json.lead.email + \"'\" }}",
+        "options": {}
+      },
+      "id": "baf4dec3-d90d-4641-8d7e-6779242ecbec",
+      "name": "Airtable - Search Existing Lead",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -580,
+        -360
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "JJlmJYBDb2Eyv7kT",
+          "name": "Airtable Personal Access Token account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine duplicate-request status and lead submission throttling\nconst leadData = $('Validate & Normalize Lead').first().json.lead;\nconst existingRecords = $input.all()\n  .map(i => i.json)\n  .filter(r => r && r.id); // drop the empty placeholder item Airtable returns on zero matches\n\nconst oneHourAgo = Date.now() - 60 * 60 * 1000;\nconst dedupWindowMs = 5 * 60 * 1000; // 5-minute duplicate window\n\n// Duplicate request: same idempotency key seen within the last 5 minutes.\n// (Matching on key alone is not enough -- a retried webhook delivery arriving\n// minutes apart must still be caught, so we check the key AND a recency window.)\nconst isDuplicateRequest = existingRecords.some(r => {\n  if (r.IdempotencyKey !== leadData.idempotencyKey) return false;\n  const t = r.SubmittedAt ? new Date(r.SubmittedAt).getTime() : 0;\n  return (Date.now() - t) <= dedupWindowMs;\n});\n\n// Lead submission throttling (business rule, not general API rate limiting):\n// more than 5 submissions from this email in the last hour.\nconst submissionsLastHour = existingRecords.filter(r => {\n  const t = r.SubmittedAt ? new Date(r.SubmittedAt).getTime() : 0;\n  return t >= oneHourAgo;\n}).length;\nconst isThrottled = submissionsLastHour >= 5;\n\nconst existingRecord = existingRecords.length > 0 ? existingRecords[0] : null;\n\nreturn [{\n  json: {\n    lead: leadData,\n    isDuplicateRequest,\n    isThrottled,\n    isReturningLead: !!existingRecord,\n    existingRecordId: existingRecord ? existingRecord.id : null,\n    blocked: isDuplicateRequest || isThrottled\n  }\n}];"
+      },
+      "id": "e77f8cfc-260b-47f1-8897-b554efbd0881",
+      "name": "Check Duplicate & Rate Limit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-blocked",
+              "leftValue": "={{ $json.blocked }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0de2214b-908c-4185-b8ce-284618062928",
+      "name": "If - Duplicate or Rate Limited?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -140,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: $json.isThrottled ? \"rate_limited\" : \"duplicate_ignored\", message: $json.isThrottled ? \"Too many submissions from this email, please try again later\" : \"This lead submission was already processed\" } }}",
+        "options": {}
+      },
+      "id": "b56f5a79-68e9-4514-9c01-55810fc61777",
+      "name": "Respond - Duplicate or Rate Limited",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        320,
+        -580
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"openai/gpt-oss-120b\",\n  response_format: { type: \"json_object\" },\n  temperature: 0.2,\n  messages: [\n    { role: \"system\", content: \"You are a B2B lead qualification assistant. Analyze the lead and respond ONLY with a JSON object with keys: is_relevant (boolean), category (string, one of: 'sales_inquiry','support_request','partnership','spam','other'), priority (string, one of: 'high','medium','low'), score (integer 0-100), summary (string, max 2 sentences), reasoning (string, max 2 sentences).\" },\n    { role: \"user\", content: `Lead details:\\nName: ${$json.lead.name}\\nCompany: ${$json.lead.company}\\nEmail: ${$json.lead.email}\\nBudget: ${$json.lead.budget}\\nTimeline: ${$json.lead.timeline}\\nSource: ${$json.lead.source}\\nMessage: ${$json.lead.message}` }\n  ]\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "2bc5230d-5bf6-4b46-a813-d43f738ca3e0",
+      "name": "HTTP Request - Groq Qualify Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        140,
+        -200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pSA8JXF7RDbI9YAy",
+          "name": "Header Auth account 5"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-ai-ok",
+              "leftValue": "={{ $json.error === undefined && $json.choices !== undefined }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cfcd18f2-1bc7-4fb7-b259-80da7a0d2935",
+      "name": "If - AI Call Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.choices[0].message.content;\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  parsed = {\n    is_relevant: true,\n    category: 'other',\n    priority: 'medium',\n    score: 50,\n    summary: 'AI response could not be parsed; defaulted to medium priority for manual review.',\n    reasoning: 'JSON parse failure on model output.'\n  };\n}\nreturn [{ json: { ...parsed, aiSucceeded: true, aiFallbackUsed: false } }];"
+      },
+      "id": "be723546-3270-4243-a587-8b05a794df3e",
+      "name": "Parse AI Qualification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deterministic business rules layered on top of the AI/fallback output\nconst ai = $input.first().json;\nconst lead = $('Check Duplicate & Rate Limit').first().json.lead;\nconst existingRecordId = $('Check Duplicate & Rate Limit').first().json.existingRecordId;\n\nlet finalScore = ai.score;\nlet finalPriority = ai.priority;\n\n// Rule: large declared budget always bumps to at least 'high'\nif (lead.budget && lead.budget >= 20000) {\n  finalPriority = 'high';\n  finalScore = Math.max(finalScore, 85);\n}\n\n// Rule: enterprise/company-provided leads get a floor boost\nif (lead.company && lead.company.length > 0 && finalPriority === 'low') {\n  finalPriority = 'medium';\n}\n\n// Rule: known spam category is never marked high priority, regardless of AI\nif (ai.category === 'spam') {\n  finalPriority = 'low';\n  ai.is_relevant = false;\n}\n\nreturn [{\n  json: {\n    lead,\n    existingRecordId,\n    isRelevant: ai.is_relevant,\n    category: ai.category,\n    priority: finalPriority,\n    score: finalScore,\n    summary: ai.summary,\n    reasoning: ai.reasoning,\n    aiSucceeded: ai.aiSucceeded,\n    aiFallbackUsed: ai.aiFallbackUsed\n  }\n}];"
+      },
+      "id": "6e0509f4-ac6a-466d-9f9b-6c8d83c16ac0",
+      "name": "Apply Business Rules",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rule-based fallback when the LLM call fails or times out\nconst lead = $('Check Duplicate & Rate Limit').first().json.lead;\nconst text = `${lead.message} ${lead.company}`.toLowerCase();\nconst spamKeywords = ['unsubscribe', 'seo services', 'crypto', 'casino'];\nconst isSpam = spamKeywords.some(k => text.includes(k));\n\nconst score = isSpam ? 5 : (lead.budget && lead.budget > 10000 ? 70 : 40);\nconst priority = isSpam ? 'low' : (lead.budget && lead.budget > 10000 ? 'high' : 'medium');\n\nreturn [{\n  json: {\n    is_relevant: !isSpam,\n    category: isSpam ? 'spam' : 'sales_inquiry',\n    priority,\n    score,\n    summary: 'Categorized via rule-based fallback because the AI qualification call failed.',\n    reasoning: 'LLM unavailable; used keyword and budget heuristics.',\n    aiSucceeded: false,\n    aiFallbackUsed: true\n  }\n}];"
+      },
+      "id": "e3e04683-5c8d-46a5-bef4-d4c6fdaf8eef",
+      "name": "Fallback Rule-Based Qualification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "applcbUSfwUOKFYAy",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblDUSXJ1hYZRrA3V",
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://airtable.com/applcbUSfwUOKFYAy/tblDUSXJ1hYZRrA3V"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Type": "error",
+            "Stage": "ai_qualification",
+            "LeadEmail": "={{ $('Check Duplicate & Rate Limit').first().json.lead.email }}",
+            "Details": "Groq qualification call failed or returned non-retryable error; rule-based fallback used.",
+            "Timestamp": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Id",
+              "displayName": "Id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Type",
+              "displayName": "Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "info",
+                  "value": "info"
+                },
+                {
+                  "name": "error",
+                  "value": "error"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Stage",
+              "displayName": "Stage",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "lead_processed",
+                  "value": "lead_processed"
+                },
+                {
+                  "name": "ai_qualification",
+                  "value": "ai_qualification"
+                },
+                {
+                  "name": "not_qualified",
+                  "value": "not_qualified"
+                },
+                {
+                  "name": "contacted",
+                  "value": "contacted"
+                },
+                {
+                  "name": "closed_won",
+                  "value": "closed_won"
+                },
+                {
+                  "name": "closed_lost",
+                  "value": "closed_lost"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "LeadEmail",
+              "displayName": "LeadEmail",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "high",
+                  "value": "high"
+                },
+                {
+                  "name": "medium",
+                  "value": "medium"
+                },
+                {
+                  "name": "low",
+                  "value": "low"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "sales_inquiry",
+                  "value": "sales_inquiry"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Details",
+              "displayName": "Details",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "id": "f69da530-4b3e-4762-8ffd-c926b54124f6",
+      "name": "Log AI Failure",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "JJlmJYBDb2Eyv7kT",
+          "name": "Airtable Personal Access Token account 5"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "applcbUSfwUOKFYAy",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tbltmazBktvqT6Taf",
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://airtable.com/applcbUSfwUOKFYAy/tbltmazBktvqT6Taf"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "AIFallbackUsed": "={{ $json.aiFallbackUsed }}",
+            "Name": "={{ $json.lead.name }}",
+            "Email": "={{ $json.lead.email }}",
+            "Phone": "={{ $json.lead.phone }}",
+            "Company": "={{ $json.lead.company }}",
+            "Source": "={{ $json.lead.source }}",
+            "Budget": "={{ $json.lead.budget }}",
+            "Timeline": "={{ $json.lead.timeline }}",
+            "Message": "={{ $json.lead.message }}",
+            "Category": "={{ $json.category }}",
+            "Priority": "={{ $json.priority }}",
+            "Score": "={{ $json.score }}",
+            "Summary": "={{ $json.summary }}",
+            "IdempotencyKey": "={{ $json.lead.idempotencyKey }}",
+            "Status": "={{ $json.isRelevant ? \"qualified\" : \"not_qualified\" }}",
+            "SubmittedAt": "={{ $json.lead.submittedAt }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Budget",
+              "displayName": "Budget",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Timeline",
+              "displayName": "Timeline",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Message",
+              "displayName": "Message",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "sales_inquiry",
+                  "value": "sales_inquiry"
+                },
+                {
+                  "name": "support_request",
+                  "value": "support_request"
+                },
+                {
+                  "name": "partnership",
+                  "value": "partnership"
+                },
+                {
+                  "name": "spam",
+                  "value": "spam"
+                },
+                {
+                  "name": "other",
+                  "value": "other"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "high",
+                  "value": "high"
+                },
+                {
+                  "name": "medium",
+                  "value": "medium"
+                },
+                {
+                  "name": "low",
+                  "value": "low"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "qualified",
+                  "value": "qualified"
+                },
+                {
+                  "name": "not_qualified",
+                  "value": "not_qualified"
+                },
+                {
+                  "name": "contacted",
+                  "value": "contacted"
+                },
+                {
+                  "name": "closed_won",
+                  "value": "closed_won"
+                },
+                {
+                  "name": "closed_lost",
+                  "value": "closed_lost"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "IdempotencyKey",
+              "displayName": "IdempotencyKey",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "SubmittedAt",
+              "displayName": "SubmittedAt",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "AIFallbackUsed",
+              "displayName": "AIFallbackUsed",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c7d9180b-c999-417d-80cc-2492844ba3e5",
+      "name": "Airtable - Upsert Lead",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1440,
+        -240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "JJlmJYBDb2Eyv7kT",
+          "name": "Airtable Personal Access Token account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "applcbUSfwUOKFYAy",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblDUSXJ1hYZRrA3V",
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://airtable.com/applcbUSfwUOKFYAy/tblDUSXJ1hYZRrA3V"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Type": "info",
+            "Stage": "lead_processed",
+            "LeadEmail": "={{ $('Apply Business Rules').first().json.lead.email }}",
+            "Priority": "={{ $('Apply Business Rules').first().json.priority }}",
+            "Category": "={{ $('Apply Business Rules').first().json.category }}",
+            "Details": "={{ \"Lead processed. AI fallback used: \" + $('Apply Business Rules').first().json.aiFallbackUsed }}",
+            "Timestamp": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Id",
+              "displayName": "Id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Type",
+              "displayName": "Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "info",
+                  "value": "info"
+                },
+                {
+                  "name": "error",
+                  "value": "error"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Stage",
+              "displayName": "Stage",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "lead_processed",
+                  "value": "lead_processed"
+                },
+                {
+                  "name": "ai_qualification",
+                  "value": "ai_qualification"
+                },
+                {
+                  "name": "not_qualified",
+                  "value": "not_qualified"
+                },
+                {
+                  "name": "contacted",
+                  "value": "contacted"
+                },
+                {
+                  "name": "closed_won",
+                  "value": "closed_won"
+                },
+                {
+                  "name": "closed_lost",
+                  "value": "closed_lost"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "LeadEmail",
+              "displayName": "LeadEmail",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "high",
+                  "value": "high"
+                },
+                {
+                  "name": "medium",
+                  "value": "medium"
+                },
+                {
+                  "name": "low",
+                  "value": "low"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "sales_inquiry",
+                  "value": "sales_inquiry"
+                },
+                {
+                  "name": "support_request",
+                  "value": "support_request"
+                },
+                {
+                  "name": "partnership",
+                  "value": "partnership"
+                },
+                {
+                  "name": "spam",
+                  "value": "spam"
+                },
+                {
+                  "name": "other",
+                  "value": "other"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Details",
+              "displayName": "Details",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "id": "99657369-3178-4a5c-8420-ec8a0f9116c4",
+      "name": "Airtable - Write Log Entry",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1680,
+        -240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "JJlmJYBDb2Eyv7kT",
+          "name": "Airtable Personal Access Token account 5"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-qualified",
+              "leftValue": "={{ $('Apply Business Rules').first().json.isRelevant }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "94b882a6-8c7c-49f1-b551-3ffa9abe1d99",
+      "name": "If - Lead Qualified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"openai/gpt-oss-120b\",\n  temperature: 0.5,\n  messages: [\n    { role: \"system\", content: \"Write a short, warm, personalized email reply (max 120 words) to a qualified sales lead, thanking them and confirming a team member will follow up within 1 business day. Sign off as 'The Sales Team'. Return plain text only, no subject line.\" },\n    { role: \"user\", content: `Name: ${$('Apply Business Rules').first().json.lead.name}\\nCompany: ${$('Apply Business Rules').first().json.lead.company}\\nMessage: ${$('Apply Business Rules').first().json.lead.message}\\nSummary: ${$('Apply Business Rules').first().json.summary}` }\n  ]\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "35b75145-ca7c-4c04-bf52-ce287fd30f9b",
+      "name": "HTTP Request - Groq Generate Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        -420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pSA8JXF7RDbI9YAy",
+          "name": "Header Auth account 5"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-email-ok",
+              "leftValue": "={{ $json.error === undefined && $json.choices !== undefined }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7bdb771b-3e84-446f-b346-ab62eb872dd4",
+      "name": "If - Email Gen Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Apply Business Rules').first().json.lead.email }}",
+        "subject": "={{ \"Thanks for reaching out, \" + $('Apply Business Rules').first().json.lead.name + \"!\" }}",
+        "message": "={{ $json.choices[0].message.content }}",
+        "options": {}
+      },
+      "id": "e96154ae-5f79-489b-b1c2-d802bfff81b3",
+      "name": "Gmail - Send Personalized Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        -440
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "f5db72f9-cb55-4a3e-a152-470d0f0d57d2",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "s1Kw7zI8HLFRHpnP",
+          "name": "Gmail account 5"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "applcbUSfwUOKFYAy",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblDUSXJ1hYZRrA3V",
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://airtable.com/applcbUSfwUOKFYAy/tblDUSXJ1hYZRrA3V"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Type": "info",
+            "Stage": "ai_qualification",
+            "LeadEmail": "={{ $('Apply Business Rules').first().json.lead.email }}",
+            "Priority": "={{ $('Apply Business Rules').first().json.priority }}",
+            "Category": "={{ $('Apply Business Rules').first().json.category }}",
+            "Details": "={{ \"Lead processed. AI fallback used: \" + $('Apply Business Rules').first().json.aiFallbackUsed }}",
+            "Timestamp": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Id",
+              "displayName": "Id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Type",
+              "displayName": "Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "info",
+                  "value": "info"
+                },
+                {
+                  "name": "error",
+                  "value": "error"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Stage",
+              "displayName": "Stage",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "lead_processed",
+                  "value": "lead_processed"
+                },
+                {
+                  "name": "ai_qualification",
+                  "value": "ai_qualification"
+                },
+                {
+                  "name": "not_qualified",
+                  "value": "not_qualified"
+                },
+                {
+                  "name": "contacted",
+                  "value": "contacted"
+                },
+                {
+                  "name": "closed_won",
+                  "value": "closed_won"
+                },
+                {
+                  "name": "closed_lost",
+                  "value": "closed_lost"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "LeadEmail",
+              "displayName": "LeadEmail",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "high",
+                  "value": "high"
+                },
+                {
+                  "name": "medium",
+                  "value": "medium"
+                },
+                {
+                  "name": "low",
+                  "value": "low"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "sales_inquiry",
+                  "value": "sales_inquiry"
+                },
+                {
+                  "name": "support_request",
+                  "value": "support_request"
+                },
+                {
+                  "name": "partnership",
+                  "value": "partnership"
+                },
+                {
+                  "name": "spam",
+                  "value": "spam"
+                },
+                {
+                  "name": "other",
+                  "value": "other"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Details",
+              "displayName": "Details",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "id": "339f0b85-654a-45e6-945f-62b0000a8bac",
+      "name": "Log Email Failure",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        2620,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "JJlmJYBDb2Eyv7kT",
+          "name": "Airtable Personal Access Token account 5"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-high-priority",
+              "leftValue": "={{ $('Apply Business Rules').first().json.priority }}",
+              "rightValue": "high",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "06492ff0-7376-46c4-aa0b-962212f88883",
+      "name": "If - High Priority?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: \"success\", email: $('Apply Business Rules').first().json.lead.email, category: $('Apply Business Rules').first().json.category, priority: $('Apply Business Rules').first().json.priority, qualified: $('Apply Business Rules').first().json.isRelevant } }}",
+        "options": {}
+      },
+      "id": "b3221b89-b393-4459-81ff-b1f8f115cbf3",
+      "name": "Respond - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3540,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C08UZKFD206",
+          "mode": "list",
+          "cachedResultName": "all-axcelarateai"
+        },
+        "text": "={{ \"🔥 High-priority lead: \" + $('Apply Business Rules').first().json.lead.name + \" (\" + $('Apply Business Rules').first().json.lead.company + \") — \" + $('Apply Business Rules').first().json.summary }}",
+        "otherOptions": {}
+      },
+      "id": "691747f4-d25f-48cf-b93b-f0178680dbc1",
+      "name": "Slack - Notify Sales Team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        -320
+      ],
+      "webhookId": "c889074a-b4fc-4b12-b651-d83895e36bd4",
+      "credentials": {
+        "slackApi": {
+          "id": "Ibne6pdUEnRHlpNG",
+          "name": "Slack account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Lead Intake": {
+      "main": [
+        [
+          {
+            "node": "Validate & Normalize Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Normalize Lead": {
+      "main": [
+        [
+          {
+            "node": "If - Valid Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Search Existing Lead": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate & Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate & Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "If - Duplicate or Rate Limited?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Valid Lead?": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Search Existing Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Duplicate or Rate Limited?": {
+      "main": [
+        [
+          {
+            "node": "Respond - Duplicate or Rate Limited",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request - Groq Qualify Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Groq Qualify Lead": {
+      "main": [
+        [
+          {
+            "node": "If - AI Call Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - AI Call Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback Rule-Based Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Qualification": {
+      "main": [
+        [
+          {
+            "node": "Apply Business Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback Rule-Based Qualification": {
+      "main": [
+        [
+          {
+            "node": "Log AI Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log AI Failure": {
+      "main": [
+        [
+          {
+            "node": "Apply Business Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Upsert Lead": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Write Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Write Log Entry": {
+      "main": [
+        [
+          {
+            "node": "If - Lead Qualified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Lead Qualified?": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Groq Generate Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If - High Priority?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Groq Generate Email": {
+      "main": [
+        [
+          {
+            "node": "If - Email Gen Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - Email Gen Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Send Personalized Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Email Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Send Personalized Email": {
+      "main": [
+        [
+          {
+            "node": "If - High Priority?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Email Failure": {
+      "main": [
+        [
+          {
+            "node": "If - High Priority?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Business Rules": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Upsert Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - High Priority?": {
+      "main": [
+        [
+          {
+            "node": "Slack - Notify Sales Team",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Notify Sales Team": {
+      "main": [
+        [
+          {
+            "node": "Respond - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": -1,
+    "errorWorkflow": "FBdj7Epz1UXI3gUx"
+  },
+  "versionId": "ea7e2a4c-7743-417a-b938-0d8ac8849c7b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "63337bc4908e426c296b1600ab54738c74d93dbb25905d6071af6b82467154cb"
+  },
+  "id": "F63rtDB2jiRLU7L8",
+  "tags": []
+}

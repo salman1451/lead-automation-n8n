@@ -1,0 +1,286 @@
+{
+  "name": "task_error_workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e74829f1-c013-4041-a644-7dff7b85d37f",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const exec = $json;\nreturn [{\n  json: {\n    timestamp: new Date().toISOString(),\n    workflowName: exec.workflow ? exec.workflow.name : 'unknown',\n    failedNode: exec.execution && exec.execution.lastNodeExecuted ? exec.execution.lastNodeExecuted : 'unknown',\n    errorMessage: exec.execution && exec.execution.error ? exec.execution.error.message : JSON.stringify(exec).slice(0, 500),\n    executionId: exec.execution ? exec.execution.id : 'unknown'\n  }\n}];"
+      },
+      "id": "2d4a1e59-ebfc-45db-b770-fcaeada4e318",
+      "name": "Extract Error Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "applcbUSfwUOKFYAy",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblDUSXJ1hYZRrA3V",
+          "mode": "list",
+          "cachedResultName": "Logs",
+          "cachedResultUrl": "https://airtable.com/applcbUSfwUOKFYAy/tblDUSXJ1hYZRrA3V"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.timestamp }}",
+            "Stage": "={{ \"workflow_error: \" + $json.failedNode }}",
+            "Details": "={{ $json.errorMessage }}",
+            "Type": "error"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Id",
+              "displayName": "Id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "Type",
+              "displayName": "Type",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "info",
+                  "value": "info"
+                },
+                {
+                  "name": "error",
+                  "value": "error"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Stage",
+              "displayName": "Stage",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "lead_processed",
+                  "value": "lead_processed"
+                },
+                {
+                  "name": "ai_qualification",
+                  "value": "ai_qualification"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "LeadEmail",
+              "displayName": "LeadEmail",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "high",
+                  "value": "high"
+                },
+                {
+                  "name": "medium",
+                  "value": "medium"
+                },
+                {
+                  "name": "low",
+                  "value": "low"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "sales_inquiry",
+                  "value": "sales_inquiry"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Details",
+              "displayName": "Details",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "id": "b45a664b-0ef0-4ed8-8d2b-03679a885fec",
+      "name": "Airtable - Create Error Log",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "JJlmJYBDb2Eyv7kT",
+          "name": "Airtable Personal Access Token account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C08UZKFD206",
+          "mode": "list",
+          "cachedResultName": "all-axcelarateai"
+        },
+        "text": "={{ \"⚠️ Lead automation error in node '\" + $json.failedNode + \"': \" + $json.errorMessage }}",
+        "otherOptions": {}
+      },
+      "id": "5477b61c-da74-4033-9c08-f9a9730802b7",
+      "name": "Slack - Alert Team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "78452a36-e33a-4ddf-b075-a871f52d01a6",
+      "credentials": {
+        "slackApi": {
+          "id": "Ibne6pdUEnRHlpNG",
+          "name": "Slack account 2"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Error Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Error Details": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Create Error Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Create Error Log": {
+      "main": [
+        [
+          {
+            "node": "Slack - Alert Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "e29dc1e9-d1cd-4fc8-85ed-62b20de95b9e",
+  "meta": {
+    "instanceId": "63337bc4908e426c296b1600ab54738c74d93dbb25905d6071af6b82467154cb"
+  },
+  "id": "FBdj7Epz1UXI3gUx",
+  "tags": []
+}
